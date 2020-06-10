@@ -3,7 +3,24 @@ import uuidv4 from 'uuid/v4';
 
 class AuthenticationController {
   /* @ngInject */
-  constructor($async, $scope, $state, $stateParams, $sanitize, $window, Authentication, UserService, EndpointService, ExtensionService, StateManager, Notifications, SettingsService, URLHelper, LocalStorage, StatusService) {
+  constructor(
+    $async,
+    $scope,
+    $state,
+    $stateParams,
+    $sanitize,
+    $window,
+    Authentication,
+    UserService,
+    EndpointService,
+    ExtensionService,
+    StateManager,
+    Notifications,
+    SettingsService,
+    URLHelper,
+    LocalStorage,
+    StatusService
+  ) {
     this.$async = $async;
     this.$scope = $scope;
     this.$state = $state;
@@ -24,12 +41,12 @@ class AuthenticationController {
     this.logo = this.StateManager.getState().application.logo;
     this.formValues = {
       Username: '',
-      Password: ''
+      Password: '',
     };
     this.state = {
       AuthenticationError: '',
       loginInProgress: true,
-      OAuthProvider: ''
+      OAuthProvider: '',
     };
 
     this.retrieveAndSaveEnabledExtensionsAsync = this.retrieveAndSaveEnabledExtensionsAsync.bind(this);
@@ -72,11 +89,9 @@ class AuthenticationController {
   determineOauthProvider(LoginURI) {
     if (LoginURI.indexOf('login.microsoftonline.com') !== -1) {
       return 'Microsoft';
-    }
-    else if (LoginURI.indexOf('accounts.google.com') !== -1) {
+    } else if (LoginURI.indexOf('accounts.google.com') !== -1) {
       return 'Google';
-    }
-    else if (LoginURI.indexOf('github.com') !== -1) {
+    } else if (LoginURI.indexOf('github.com') !== -1) {
       return 'Github';
     }
     return 'OAuth';
@@ -113,10 +128,10 @@ class AuthenticationController {
     }
   }
 
-  async checkForEndpointsAsync(noAuth) {
+  async checkForEndpointsAsync() {
     try {
       const endpoints = await this.EndpointService.endpoints(0, 1);
-      const isAdmin = noAuth || this.Authentication.isAdmin();
+      const isAdmin = this.Authentication.isAdmin();
 
       if (endpoints.value.length === 0 && isAdmin) {
         return this.$state.go('portainer.init.endpoint');
@@ -131,7 +146,7 @@ class AuthenticationController {
   async checkForLatestVersionAsync() {
     let versionInfo = {
       UpdateAvailable: false,
-      LatestVersion: ''
+      LatestVersion: '',
     };
 
     try {
@@ -147,7 +162,7 @@ class AuthenticationController {
 
   async postLoginSteps() {
     await this.retrieveAndSaveEnabledExtensionsAsync();
-    await this.checkForEndpointsAsync(false);
+    await this.checkForEndpointsAsync();
     await this.checkForLatestVersionAsync();
   }
   /**
@@ -207,7 +222,7 @@ class AuthenticationController {
   }
 
   authenticateUser() {
-    return this.$async(this.authenticateUserAsync)
+    return this.$async(this.authenticateUserAsync);
   }
 
   /**
@@ -232,7 +247,7 @@ class AuthenticationController {
         this.$state.go('portainer.init.admin');
       }
     } catch (err) {
-      this.error(err, 'Unable to verify administrator account existence')
+      this.error(err, 'Unable to verify administrator account existence');
     }
   }
 
@@ -267,12 +282,7 @@ class AuthenticationController {
       }
       this.state.loginInProgress = false;
 
-      const authenticationEnabled = this.$scope.applicationState.application.authentication;
-      if (!authenticationEnabled) {
-        await this.checkForEndpointsAsync(true);
-      } else {
-        await this.authEnabledFlowAsync();
-      }
+      await this.authEnabledFlowAsync();
     } catch (err) {
       this.Notifications.error('Failure', err, 'Unable to retrieve public settings');
     }

@@ -8,8 +8,7 @@ angular.module('portainer.docker').component('configsDatatable', {
     tableKey: '@',
     orderBy: '@',
     reverseOrder: '<',
-    showOwnershipColumn: '<',
     removeAction: '<',
-    refreshCallback: '<'
-  }
+    refreshCallback: '<',
+  },
 });

@@ -8,10 +8,9 @@ angular.module('portainer.docker').component('networksDatatable', {
     tableKey: '@',
     orderBy: '@',
     reverseOrder: '<',
-    showOwnershipColumn: '<',
     showHostColumn: '<',
     removeAction: '<',
     offlineMode: '<',
-    refreshCallback: '<'
-  }
+    refreshCallback: '<',
+  },
 });

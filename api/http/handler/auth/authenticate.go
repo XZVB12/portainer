@@ -32,22 +32,18 @@ func (payload *authenticatePayload) Validate(r *http.Request) error {
 }
 
 func (handler *Handler) authenticate(w http.ResponseWriter, r *http.Request) *httperror.HandlerError {
-	if handler.authDisabled {
-		return &httperror.HandlerError{http.StatusServiceUnavailable, "Cannot authenticate user. Portainer was started with the --no-auth flag", ErrAuthDisabled}
-	}
-
 	var payload authenticatePayload
 	err := request.DecodeAndValidateJSONPayload(r, &payload)
 	if err != nil {
 		return &httperror.HandlerError{http.StatusBadRequest, "Invalid request payload", err}
 	}
 
-	settings, err := handler.SettingsService.Settings()
+	settings, err := handler.DataStore.Settings().Settings()
 	if err != nil {
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to retrieve settings from the database", err}
 	}
 
-	u, err := handler.UserService.UserByUsername(payload.Username)
+	u, err := handler.DataStore.User().UserByUsername(payload.Username)
 	if err != nil && err != portainer.ErrObjectNotFound {
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to retrieve a user with the specified username from the database", err}
 	}
@@ -108,7 +104,7 @@ func (handler *Handler) authenticateLDAPAndCreateUser(w http.ResponseWriter, use
 		PortainerAuthorizations: portainer.DefaultPortainerAuthorizations(),
 	}
 
-	err = handler.UserService.CreateUser(user)
+	err = handler.DataStore.User().CreateUser(user)
 	if err != nil {
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to persist user inside the database", err}
 	}
@@ -146,7 +142,7 @@ func (handler *Handler) persistAndWriteToken(w http.ResponseWriter, tokenData *p
 }
 
 func (handler *Handler) addUserIntoTeams(user *portainer.User, settings *portainer.LDAPSettings) error {
-	teams, err := handler.TeamService.Teams()
+	teams, err := handler.DataStore.Team().Teams()
 	if err != nil {
 		return err
 	}
@@ -156,7 +152,7 @@ func (handler *Handler) addUserIntoTeams(user *portainer.User, settings *portain
 		return err
 	}
 
-	userMemberships, err := handler.TeamMembershipService.TeamMembershipsByUserID(user.ID)
+	userMemberships, err := handler.DataStore.TeamMembership().TeamMembershipsByUserID(user.ID)
 	if err != nil {
 		return err
 	}
@@ -174,7 +170,7 @@ func (handler *Handler) addUserIntoTeams(user *portainer.User, settings *portain
 				Role:   portainer.TeamMember,
 			}
 
-			err := handler.TeamMembershipService.CreateTeamMembership(membership)
+			err := handler.DataStore.TeamMembership().CreateTeamMembership(membership)
 			if err != nil {
 				return err
 			}

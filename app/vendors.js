@@ -10,7 +10,6 @@ import 'codemirror/lib/codemirror.css';
 import 'codemirror/addon/lint/lint.css';
 import 'angular-json-tree/dist/angular-json-tree.css';
 import 'angular-loading-bar/build/loading-bar.css';
-import 'rdash-ui/dist/css/rdash.css';
 import 'angular-moment-picker/dist/angular-moment-picker.min.css';
 import 'angular-multiselect/isteven-multi-select.css';
 
@@ -35,7 +34,7 @@ import 'angular-file-saver';
 import 'angularjs-scroll-glue';
 import 'angularjs-slider';
 import 'bootstrap/dist/js/bootstrap.js';
-import 'js-yaml/dist/js-yaml.js'
+import 'js-yaml/dist/js-yaml.js';
 import 'angular-ui-bootstrap';
 import 'angular-moment-picker';
 import 'angular-multiselect/isteven-multi-select.js';

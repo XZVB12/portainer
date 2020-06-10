@@ -10,11 +10,10 @@ angular.module('portainer.docker').component('servicesDatatable', {
     reverseOrder: '<',
     nodes: '<',
     agentProxy: '<',
-    showOwnershipColumn: '<',
     showUpdateAction: '<',
     showAddAction: '<',
     showStackColumn: '<',
     showTaskLogsButton: '<',
-    refreshCallback: '<'
-  }
+    refreshCallback: '<',
+  },
 });
