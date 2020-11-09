@@ -24,13 +24,13 @@ type swarmStackFromFileContentPayload struct {
 
 func (payload *swarmStackFromFileContentPayload) Validate(r *http.Request) error {
 	if govalidator.IsNull(payload.Name) {
-		return portainer.Error("Invalid stack name")
+		return errors.New("Invalid stack name")
 	}
 	if govalidator.IsNull(payload.SwarmID) {
-		return portainer.Error("Invalid Swarm ID")
+		return errors.New("Invalid Swarm ID")
 	}
 	if govalidator.IsNull(payload.StackFileContent) {
-		return portainer.Error("Invalid stack file content")
+		return errors.New("Invalid stack file content")
 	}
 	return nil
 }
@@ -49,7 +49,7 @@ func (handler *Handler) createSwarmStackFromFileContent(w http.ResponseWriter, r
 
 	for _, stack := range stacks {
 		if strings.EqualFold(stack.Name, payload.Name) {
-			return &httperror.HandlerError{http.StatusConflict, "A stack with this name already exists", portainer.ErrStackAlreadyExists}
+			return &httperror.HandlerError{http.StatusConflict, "A stack with this name already exists", errStackAlreadyExists}
 		}
 	}
 
@@ -62,6 +62,7 @@ func (handler *Handler) createSwarmStackFromFileContent(w http.ResponseWriter, r
 		EndpointID: endpoint.ID,
 		EntryPoint: filesystem.ComposeFileDefaultName,
 		Env:        payload.Env,
+		Status:     portainer.StackStatusActive,
 	}
 
 	stackFolder := strconv.Itoa(int(stack.ID))
@@ -107,16 +108,16 @@ type swarmStackFromGitRepositoryPayload struct {
 
 func (payload *swarmStackFromGitRepositoryPayload) Validate(r *http.Request) error {
 	if govalidator.IsNull(payload.Name) {
-		return portainer.Error("Invalid stack name")
+		return errors.New("Invalid stack name")
 	}
 	if govalidator.IsNull(payload.SwarmID) {
-		return portainer.Error("Invalid Swarm ID")
+		return errors.New("Invalid Swarm ID")
 	}
 	if govalidator.IsNull(payload.RepositoryURL) || !govalidator.IsURL(payload.RepositoryURL) {
-		return portainer.Error("Invalid repository URL. Must correspond to a valid URL format")
+		return errors.New("Invalid repository URL. Must correspond to a valid URL format")
 	}
 	if payload.RepositoryAuthentication && (govalidator.IsNull(payload.RepositoryUsername) || govalidator.IsNull(payload.RepositoryPassword)) {
-		return portainer.Error("Invalid repository credentials. Username and password must be specified when authentication is enabled")
+		return errors.New("Invalid repository credentials. Username and password must be specified when authentication is enabled")
 	}
 	if govalidator.IsNull(payload.ComposeFilePathInRepository) {
 		payload.ComposeFilePathInRepository = filesystem.ComposeFileDefaultName
@@ -138,7 +139,7 @@ func (handler *Handler) createSwarmStackFromGitRepository(w http.ResponseWriter,
 
 	for _, stack := range stacks {
 		if strings.EqualFold(stack.Name, payload.Name) {
-			return &httperror.HandlerError{http.StatusConflict, "A stack with this name already exists", portainer.ErrStackAlreadyExists}
+			return &httperror.HandlerError{http.StatusConflict, "A stack with this name already exists", errStackAlreadyExists}
 		}
 	}
 
@@ -151,6 +152,7 @@ func (handler *Handler) createSwarmStackFromGitRepository(w http.ResponseWriter,
 		EndpointID: endpoint.ID,
 		EntryPoint: payload.ComposeFilePathInRepository,
 		Env:        payload.Env,
+		Status:     portainer.StackStatusActive,
 	}
 
 	projectPath := handler.FileService.GetStackProjectPath(strconv.Itoa(int(stack.ID)))
@@ -202,26 +204,26 @@ type swarmStackFromFileUploadPayload struct {
 func (payload *swarmStackFromFileUploadPayload) Validate(r *http.Request) error {
 	name, err := request.RetrieveMultiPartFormValue(r, "Name", false)
 	if err != nil {
-		return portainer.Error("Invalid stack name")
+		return errors.New("Invalid stack name")
 	}
 	payload.Name = name
 
 	swarmID, err := request.RetrieveMultiPartFormValue(r, "SwarmID", false)
 	if err != nil {
-		return portainer.Error("Invalid Swarm ID")
+		return errors.New("Invalid Swarm ID")
 	}
 	payload.SwarmID = swarmID
 
 	composeFileContent, _, err := request.RetrieveMultiPartFormFile(r, "file")
 	if err != nil {
-		return portainer.Error("Invalid Compose file. Ensure that the Compose file is uploaded correctly")
+		return errors.New("Invalid Compose file. Ensure that the Compose file is uploaded correctly")
 	}
 	payload.StackFileContent = composeFileContent
 
 	var env []portainer.Pair
 	err = request.RetrieveMultiPartFormJSONValue(r, "Env", &env, true)
 	if err != nil {
-		return portainer.Error("Invalid Env parameter")
+		return errors.New("Invalid Env parameter")
 	}
 	payload.Env = env
 	return nil
@@ -241,7 +243,7 @@ func (handler *Handler) createSwarmStackFromFileUpload(w http.ResponseWriter, r 
 
 	for _, stack := range stacks {
 		if strings.EqualFold(stack.Name, payload.Name) {
-			return &httperror.HandlerError{http.StatusConflict, "A stack with this name already exists", portainer.ErrStackAlreadyExists}
+			return &httperror.HandlerError{http.StatusConflict, "A stack with this name already exists", errStackAlreadyExists}
 		}
 	}
 
@@ -254,6 +256,7 @@ func (handler *Handler) createSwarmStackFromFileUpload(w http.ResponseWriter, r 
 		EndpointID: endpoint.ID,
 		EntryPoint: filesystem.ComposeFileDefaultName,
 		Env:        payload.Env,
+		Status:     portainer.StackStatusActive,
 	}
 
 	stackFolder := strconv.Itoa(int(stack.ID))
@@ -292,6 +295,7 @@ type swarmStackDeploymentConfig struct {
 	registries []portainer.Registry
 	prune      bool
 	isAdmin    bool
+	user       *portainer.User
 }
 
 func (handler *Handler) createSwarmDeployConfig(r *http.Request, stack *portainer.Stack, endpoint *portainer.Endpoint, prune bool) (*swarmStackDeploymentConfig, *httperror.HandlerError) {
@@ -311,6 +315,11 @@ func (handler *Handler) createSwarmDeployConfig(r *http.Request, stack *portaine
 	}
 	filteredRegistries := security.FilterRegistries(registries, securityContext)
 
+	user, err := handler.DataStore.User().User(securityContext.UserID)
+	if err != nil {
+		return nil, &httperror.HandlerError{http.StatusInternalServerError, "Unable to load user information from the database", err}
+	}
+
 	config := &swarmStackDeploymentConfig{
 		stack:      stack,
 		endpoint:   endpoint,
@@ -318,6 +327,7 @@ func (handler *Handler) createSwarmDeployConfig(r *http.Request, stack *portaine
 		registries: filteredRegistries,
 		prune:      prune,
 		isAdmin:    securityContext.IsAdmin,
+		user:       user,
 	}
 
 	return config, nil
@@ -329,7 +339,12 @@ func (handler *Handler) deploySwarmStack(config *swarmStackDeploymentConfig) err
 		return err
 	}
 
-	if !settings.AllowBindMountsForRegularUsers && !config.isAdmin {
+	isAdminOrEndpointAdmin, err := handler.userIsAdminOrEndpointAdmin(config.user, config.endpoint.ID)
+	if err != nil {
+		return err
+	}
+
+	if !settings.AllowBindMountsForRegularUsers && !isAdminOrEndpointAdmin {
 		composeFilePath := path.Join(config.stack.ProjectPath, config.stack.EntryPoint)
 
 		stackContent, err := handler.FileService.GetFileContent(composeFilePath)
@@ -337,12 +352,9 @@ func (handler *Handler) deploySwarmStack(config *swarmStackDeploymentConfig) err
 			return err
 		}
 
-		valid, err := handler.isValidStackFile(stackContent)
+		err = handler.isValidStackFile(stackContent, settings)
 		if err != nil {
 			return err
-		}
-		if !valid {
-			return errors.New("bind-mount disabled for non administrator users")
 		}
 	}
 

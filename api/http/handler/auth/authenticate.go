@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"github.com/portainer/libhttp/request"
 	"github.com/portainer/libhttp/response"
 	"github.com/portainer/portainer/api"
+	bolterrors "github.com/portainer/portainer/api/bolt/errors"
+	httperrors "github.com/portainer/portainer/api/http/errors"
 )
 
 type authenticatePayload struct {
@@ -23,10 +26,10 @@ type authenticateResponse struct {
 
 func (payload *authenticatePayload) Validate(r *http.Request) error {
 	if govalidator.IsNull(payload.Username) {
-		return portainer.Error("Invalid username")
+		return errors.New("Invalid username")
 	}
 	if govalidator.IsNull(payload.Password) {
-		return portainer.Error("Invalid password")
+		return errors.New("Invalid password")
 	}
 	return nil
 }
@@ -44,19 +47,19 @@ func (handler *Handler) authenticate(w http.ResponseWriter, r *http.Request) *ht
 	}
 
 	u, err := handler.DataStore.User().UserByUsername(payload.Username)
-	if err != nil && err != portainer.ErrObjectNotFound {
+	if err != nil && err != bolterrors.ErrObjectNotFound {
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to retrieve a user with the specified username from the database", err}
 	}
 
-	if err == portainer.ErrObjectNotFound && (settings.AuthenticationMethod == portainer.AuthenticationInternal || settings.AuthenticationMethod == portainer.AuthenticationOAuth) {
-		return &httperror.HandlerError{http.StatusUnprocessableEntity, "Invalid credentials", portainer.ErrUnauthorized}
+	if err == bolterrors.ErrObjectNotFound && (settings.AuthenticationMethod == portainer.AuthenticationInternal || settings.AuthenticationMethod == portainer.AuthenticationOAuth) {
+		return &httperror.HandlerError{http.StatusUnprocessableEntity, "Invalid credentials", httperrors.ErrUnauthorized}
 	}
 
 	if settings.AuthenticationMethod == portainer.AuthenticationLDAP {
 		if u == nil && settings.LDAPSettings.AutoCreateUsers {
 			return handler.authenticateLDAPAndCreateUser(w, payload.Username, payload.Password, &settings.LDAPSettings)
 		} else if u == nil && !settings.LDAPSettings.AutoCreateUsers {
-			return &httperror.HandlerError{http.StatusUnprocessableEntity, "Invalid credentials", portainer.ErrUnauthorized}
+			return &httperror.HandlerError{http.StatusUnprocessableEntity, "Invalid credentials", httperrors.ErrUnauthorized}
 		}
 		return handler.authenticateLDAP(w, u, payload.Password, &settings.LDAPSettings)
 	}
@@ -75,18 +78,13 @@ func (handler *Handler) authenticateLDAP(w http.ResponseWriter, user *portainer.
 		log.Printf("Warning: unable to automatically add user into teams: %s\n", err.Error())
 	}
 
-	err = handler.AuthorizationService.UpdateUsersAuthorizations()
-	if err != nil {
-		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to update user authorizations", err}
-	}
-
 	return handler.writeToken(w, user)
 }
 
 func (handler *Handler) authenticateInternal(w http.ResponseWriter, user *portainer.User, password string) *httperror.HandlerError {
 	err := handler.CryptoService.CompareHashAndData(user.Password, password)
 	if err != nil {
-		return &httperror.HandlerError{http.StatusUnprocessableEntity, "Invalid credentials", portainer.ErrUnauthorized}
+		return &httperror.HandlerError{http.StatusUnprocessableEntity, "Invalid credentials", httperrors.ErrUnauthorized}
 	}
 
 	return handler.writeToken(w, user)
@@ -99,9 +97,8 @@ func (handler *Handler) authenticateLDAPAndCreateUser(w http.ResponseWriter, use
 	}
 
 	user := &portainer.User{
-		Username:                username,
-		Role:                    portainer.StandardUserRole,
-		PortainerAuthorizations: portainer.DefaultPortainerAuthorizations(),
+		Username: username,
+		Role:     portainer.StandardUserRole,
 	}
 
 	err = handler.DataStore.User().CreateUser(user)
@@ -112,11 +109,6 @@ func (handler *Handler) authenticateLDAPAndCreateUser(w http.ResponseWriter, use
 	err = handler.addUserIntoTeams(user, ldapSettings)
 	if err != nil {
 		log.Printf("Warning: unable to automatically add user into teams: %s\n", err.Error())
-	}
-
-	err = handler.AuthorizationService.UpdateUsersAuthorizations()
-	if err != nil {
-		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to update user authorizations", err}
 	}
 
 	return handler.writeToken(w, user)

@@ -1,13 +1,16 @@
 package edgegroups
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/asaskevich/govalidator"
 	httperror "github.com/portainer/libhttp/error"
 	"github.com/portainer/libhttp/request"
 	"github.com/portainer/libhttp/response"
-	portainer "github.com/portainer/portainer/api"
+	"github.com/portainer/portainer/api"
+	bolterrors "github.com/portainer/portainer/api/bolt/errors"
+	"github.com/portainer/portainer/api/internal/edge"
 )
 
 type edgeGroupUpdatePayload struct {
@@ -20,13 +23,13 @@ type edgeGroupUpdatePayload struct {
 
 func (payload *edgeGroupUpdatePayload) Validate(r *http.Request) error {
 	if govalidator.IsNull(payload.Name) {
-		return portainer.Error("Invalid Edge group name")
+		return errors.New("Invalid Edge group name")
 	}
 	if payload.Dynamic && (payload.TagIDs == nil || len(payload.TagIDs) == 0) {
-		return portainer.Error("TagIDs is mandatory for a dynamic Edge group")
+		return errors.New("TagIDs is mandatory for a dynamic Edge group")
 	}
 	if !payload.Dynamic && (payload.Endpoints == nil || len(payload.Endpoints) == 0) {
-		return portainer.Error("Endpoints is mandatory for a static Edge group")
+		return errors.New("Endpoints is mandatory for a static Edge group")
 	}
 	return nil
 }
@@ -44,7 +47,7 @@ func (handler *Handler) edgeGroupUpdate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	edgeGroup, err := handler.DataStore.EdgeGroup().EdgeGroup(portainer.EdgeGroupID(edgeGroupID))
-	if err == portainer.ErrObjectNotFound {
+	if err == bolterrors.ErrObjectNotFound {
 		return &httperror.HandlerError{http.StatusNotFound, "Unable to find an Edge group with the specified identifier inside the database", err}
 	} else if err != nil {
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to find an Edge group with the specified identifier inside the database", err}
@@ -57,7 +60,7 @@ func (handler *Handler) edgeGroupUpdate(w http.ResponseWriter, r *http.Request) 
 		}
 		for _, edgeGroup := range edgeGroups {
 			if edgeGroup.Name == payload.Name && edgeGroup.ID != portainer.EdgeGroupID(edgeGroupID) {
-				return &httperror.HandlerError{http.StatusBadRequest, "Edge group name must be unique", portainer.Error("Edge group name must be unique")}
+				return &httperror.HandlerError{http.StatusBadRequest, "Edge group name must be unique", errors.New("Edge group name must be unique")}
 			}
 		}
 
@@ -73,7 +76,7 @@ func (handler *Handler) edgeGroupUpdate(w http.ResponseWriter, r *http.Request) 
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to retrieve endpoint groups from database", err}
 	}
 
-	oldRelatedEndpoints := portainer.EdgeGroupRelatedEndpoints(edgeGroup, endpoints, endpointGroups)
+	oldRelatedEndpoints := edge.EdgeGroupRelatedEndpoints(edgeGroup, endpoints, endpointGroups)
 
 	edgeGroup.Dynamic = payload.Dynamic
 	if edgeGroup.Dynamic {
@@ -86,7 +89,7 @@ func (handler *Handler) edgeGroupUpdate(w http.ResponseWriter, r *http.Request) 
 				return &httperror.HandlerError{http.StatusInternalServerError, "Unable to retrieve endpoint from the database", err}
 			}
 
-			if endpoint.Type == portainer.EdgeAgentEnvironment {
+			if endpoint.Type == portainer.EdgeAgentOnDockerEnvironment || endpoint.Type == portainer.EdgeAgentOnKubernetesEnvironment {
 				endpointIDs = append(endpointIDs, endpoint.ID)
 			}
 		}
@@ -102,7 +105,7 @@ func (handler *Handler) edgeGroupUpdate(w http.ResponseWriter, r *http.Request) 
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to persist Edge group changes inside the database", err}
 	}
 
-	newRelatedEndpoints := portainer.EdgeGroupRelatedEndpoints(edgeGroup, endpoints, endpointGroups)
+	newRelatedEndpoints := edge.EdgeGroupRelatedEndpoints(edgeGroup, endpoints, endpointGroups)
 	endpointsToUpdate := append(newRelatedEndpoints, oldRelatedEndpoints...)
 
 	for _, endpointID := range endpointsToUpdate {
@@ -143,7 +146,7 @@ func (handler *Handler) updateEndpoint(endpointID portainer.EndpointID) error {
 
 	edgeStackSet := map[portainer.EdgeStackID]bool{}
 
-	endpointEdgeStacks := portainer.EndpointRelatedEdgeStacks(endpoint, endpointGroup, edgeGroups, edgeStacks)
+	endpointEdgeStacks := edge.EndpointRelatedEdgeStacks(endpoint, endpointGroup, edgeGroups, edgeStacks)
 	for _, edgeStackID := range endpointEdgeStacks {
 		edgeStackSet[edgeStackID] = true
 	}

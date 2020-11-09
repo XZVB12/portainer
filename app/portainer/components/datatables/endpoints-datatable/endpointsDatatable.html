@@ -63,7 +63,7 @@
           </thead>
           <tbody>
             <tr
-              dir-paginate="item in $ctrl.state.filteredDataSet | itemsPerPage: $ctrl.state.paginatedItemLimit"
+              dir-paginate="item in $ctrl.state.filteredDataSet | orderBy:$ctrl.state.orderBy:$ctrl.state.reverseOrder | itemsPerPage: $ctrl.state.paginatedItemLimit"
               total-items="$ctrl.state.totalFilteredDataSet"
               ng-class="{ active: item.Checked }"
             >
@@ -80,7 +80,10 @@
                   {{ item.Type | endpointtypename }}
                 </span>
               </td>
-              <td>{{ item.URL | stripprotocol }}</td>
+              <td>
+                <span ng-if="item.Type !== 4">{{ item.URL | stripprotocol }}</span>
+                <span ng-if="item.Type === 4">-</span>
+              </td>
               <td>{{ item.GroupName }}</td>
               <td>
                 <a ui-sref="portainer.endpoints.endpoint.access({id: item.Id})"> <i class="fa fa-users" aria-hidden="true"></i> Manage access </a>

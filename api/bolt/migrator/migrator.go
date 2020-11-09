@@ -17,6 +17,7 @@ import (
 	"github.com/portainer/portainer/api/bolt/teammembership"
 	"github.com/portainer/portainer/api/bolt/user"
 	"github.com/portainer/portainer/api/bolt/version"
+	"github.com/portainer/portainer/api/internal/authorization"
 )
 
 type (
@@ -39,7 +40,7 @@ type (
 		userService             *user.Service
 		versionService          *version.Service
 		fileService             portainer.FileService
-		authorizationService    *portainer.AuthorizationService
+		authorizationService    *authorization.Service
 	}
 
 	// Parameters represents the required parameters to create a new Migrator instance.
@@ -61,7 +62,7 @@ type (
 		UserService             *user.Service
 		VersionService          *version.Service
 		FileService             portainer.FileService
-		AuthorizationService    *portainer.AuthorizationService
+		AuthorizationService    *authorization.Service
 	}
 )
 
@@ -320,9 +321,22 @@ func (m *Migrator) Migrate() error {
 		}
 	}
 
-	// Portainer 2.0
+	// Portainer 1.24.1
 	if m.currentDBVersion < 24 {
 		err := m.updateSettingsToDB24()
+		if err != nil {
+			return err
+		}
+	}
+
+	// Portainer 2.0.0
+	if m.currentDBVersion < 25 {
+		err := m.updateSettingsToDB25()
+		if err != nil {
+			return err
+		}
+
+		err = m.updateStacksToDB24()
 		if err != nil {
 			return err
 		}

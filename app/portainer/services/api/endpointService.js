@@ -1,3 +1,5 @@
+import { PortainerEndpointCreationTypes } from 'Portainer/models/endpoint/models';
+
 angular.module('portainer.app').factory('EndpointService', [
   '$q',
   'Endpoints',
@@ -11,6 +13,9 @@ angular.module('portainer.app').factory('EndpointService', [
     };
 
     service.endpoints = function (start, limit, { search, type, tagIds, endpointIds, tagsPartialMatch } = {}) {
+      if (tagIds && !tagIds.length) {
+        return Promise.resolve({ value: [], totalCount: 0 });
+      }
       return Endpoints.query({ start, limit, search, type, tagIds: JSON.stringify(tagIds), endpointIds: JSON.stringify(endpointIds), tagsPartialMatch }).$promise;
     };
 
@@ -54,7 +59,7 @@ angular.module('portainer.app').factory('EndpointService', [
     service.createLocalEndpoint = function () {
       var deferred = $q.defer();
 
-      FileUploadService.createEndpoint('local', 1, '', '', 1, [], false)
+      FileUploadService.createEndpoint('local', PortainerEndpointCreationTypes.LocalDockerEnvironment, '', '', 1, [], false)
         .then(function success(response) {
           deferred.resolve(response.data);
         })
@@ -67,7 +72,7 @@ angular.module('portainer.app').factory('EndpointService', [
 
     service.createRemoteEndpoint = function (
       name,
-      type,
+      creationType,
       URL,
       PublicURL,
       groupID,
@@ -83,13 +88,13 @@ angular.module('portainer.app').factory('EndpointService', [
       var deferred = $q.defer();
 
       var endpointURL = URL;
-      if (type !== 4) {
+      if (creationType !== PortainerEndpointCreationTypes.EdgeAgentEnvironment) {
         endpointURL = 'tcp://' + URL;
       }
 
       FileUploadService.createEndpoint(
         name,
-        type,
+        creationType,
         endpointURL,
         PublicURL,
         groupID,
@@ -112,6 +117,20 @@ angular.module('portainer.app').factory('EndpointService', [
       return deferred.promise;
     };
 
+    service.createLocalKubernetesEndpoint = function () {
+      var deferred = $q.defer();
+
+      FileUploadService.createEndpoint('local', PortainerEndpointCreationTypes.LocalKubernetesEnvironment, '', '', 1, [], true, true, true)
+        .then(function success(response) {
+          deferred.resolve(response.data);
+        })
+        .catch(function error(err) {
+          deferred.reject({ msg: 'Unable to create endpoint', err: err });
+        });
+
+      return deferred.promise;
+    };
+
     service.createAzureEndpoint = function (name, applicationId, tenantId, authenticationKey, groupId, tagIds) {
       var deferred = $q.defer();
 
@@ -124,19 +143,6 @@ angular.module('portainer.app').factory('EndpointService', [
         });
 
       return deferred.promise;
-    };
-
-    service.executeJobFromFileUpload = function (image, jobFile, endpointId, nodeName) {
-      return FileUploadService.executeEndpointJob(image, jobFile, endpointId, nodeName);
-    };
-
-    service.executeJobFromFileContent = function (image, jobFileContent, endpointId, nodeName) {
-      var payload = {
-        Image: image,
-        FileContent: jobFileContent,
-      };
-
-      return Endpoints.executeJob({ id: endpointId, method: 'string', nodeName: nodeName }, payload).$promise;
     };
 
     return service;

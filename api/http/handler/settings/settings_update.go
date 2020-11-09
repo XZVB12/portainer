@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"errors"
 	"net/http"
 	"time"
 
@@ -8,41 +9,46 @@ import (
 	httperror "github.com/portainer/libhttp/error"
 	"github.com/portainer/libhttp/request"
 	"github.com/portainer/libhttp/response"
-	"github.com/portainer/portainer/api"
+	portainer "github.com/portainer/portainer/api"
 	"github.com/portainer/portainer/api/filesystem"
 )
 
 type settingsUpdatePayload struct {
-	LogoURL                            *string
-	BlackListedLabels                  []portainer.Pair
-	AuthenticationMethod               *int
-	LDAPSettings                       *portainer.LDAPSettings
-	OAuthSettings                      *portainer.OAuthSettings
-	AllowBindMountsForRegularUsers     *bool
-	AllowPrivilegedModeForRegularUsers *bool
-	AllowVolumeBrowserForRegularUsers  *bool
-	EnableHostManagementFeatures       *bool
-	SnapshotInterval                   *string
-	TemplatesURL                       *string
-	EdgeAgentCheckinInterval           *int
-	EnableEdgeComputeFeatures          *bool
-	UserSessionTimeout                 *string
+	LogoURL                                   *string
+	BlackListedLabels                         []portainer.Pair
+	AuthenticationMethod                      *int
+	LDAPSettings                              *portainer.LDAPSettings
+	OAuthSettings                             *portainer.OAuthSettings
+	AllowBindMountsForRegularUsers            *bool
+	AllowPrivilegedModeForRegularUsers        *bool
+	AllowHostNamespaceForRegularUsers         *bool
+	AllowVolumeBrowserForRegularUsers         *bool
+	AllowDeviceMappingForRegularUsers         *bool
+	AllowStackManagementForRegularUsers       *bool
+	AllowContainerCapabilitiesForRegularUsers *bool
+	EnableHostManagementFeatures              *bool
+	SnapshotInterval                          *string
+	TemplatesURL                              *string
+	EdgeAgentCheckinInterval                  *int
+	EnableEdgeComputeFeatures                 *bool
+	UserSessionTimeout                        *string
+	EnableTelemetry                           *bool
 }
 
 func (payload *settingsUpdatePayload) Validate(r *http.Request) error {
-	if *payload.AuthenticationMethod != 1 && *payload.AuthenticationMethod != 2 && *payload.AuthenticationMethod != 3 {
-		return portainer.Error("Invalid authentication method value. Value must be one of: 1 (internal), 2 (LDAP/AD) or 3 (OAuth)")
+	if payload.AuthenticationMethod != nil && *payload.AuthenticationMethod != 1 && *payload.AuthenticationMethod != 2 && *payload.AuthenticationMethod != 3 {
+		return errors.New("Invalid authentication method value. Value must be one of: 1 (internal), 2 (LDAP/AD) or 3 (OAuth)")
 	}
 	if payload.LogoURL != nil && *payload.LogoURL != "" && !govalidator.IsURL(*payload.LogoURL) {
-		return portainer.Error("Invalid logo URL. Must correspond to a valid URL format")
+		return errors.New("Invalid logo URL. Must correspond to a valid URL format")
 	}
 	if payload.TemplatesURL != nil && *payload.TemplatesURL != "" && !govalidator.IsURL(*payload.TemplatesURL) {
-		return portainer.Error("Invalid external templates URL. Must correspond to a valid URL format")
+		return errors.New("Invalid external templates URL. Must correspond to a valid URL format")
 	}
 	if payload.UserSessionTimeout != nil {
 		_, err := time.ParseDuration(*payload.UserSessionTimeout)
 		if err != nil {
-			return portainer.Error("Invalid user session timeout")
+			return errors.New("Invalid user session timeout")
 		}
 	}
 
@@ -109,10 +115,8 @@ func (handler *Handler) settingsUpdate(w http.ResponseWriter, r *http.Request) *
 		settings.AllowPrivilegedModeForRegularUsers = *payload.AllowPrivilegedModeForRegularUsers
 	}
 
-	updateAuthorizations := false
 	if payload.AllowVolumeBrowserForRegularUsers != nil {
 		settings.AllowVolumeBrowserForRegularUsers = *payload.AllowVolumeBrowserForRegularUsers
-		updateAuthorizations = true
 	}
 
 	if payload.EnableHostManagementFeatures != nil {
@@ -121,6 +125,18 @@ func (handler *Handler) settingsUpdate(w http.ResponseWriter, r *http.Request) *
 
 	if payload.EnableEdgeComputeFeatures != nil {
 		settings.EnableEdgeComputeFeatures = *payload.EnableEdgeComputeFeatures
+	}
+
+	if payload.AllowHostNamespaceForRegularUsers != nil {
+		settings.AllowHostNamespaceForRegularUsers = *payload.AllowHostNamespaceForRegularUsers
+	}
+
+	if payload.AllowStackManagementForRegularUsers != nil {
+		settings.AllowStackManagementForRegularUsers = *payload.AllowStackManagementForRegularUsers
+	}
+
+	if payload.AllowContainerCapabilitiesForRegularUsers != nil {
+		settings.AllowContainerCapabilitiesForRegularUsers = *payload.AllowContainerCapabilitiesForRegularUsers
 	}
 
 	if payload.SnapshotInterval != nil && *payload.SnapshotInterval != settings.SnapshotInterval {
@@ -142,6 +158,14 @@ func (handler *Handler) settingsUpdate(w http.ResponseWriter, r *http.Request) *
 		handler.JWTService.SetUserSessionDuration(userSessionDuration)
 	}
 
+	if payload.AllowDeviceMappingForRegularUsers != nil {
+		settings.AllowDeviceMappingForRegularUsers = *payload.AllowDeviceMappingForRegularUsers
+	}
+
+	if payload.EnableTelemetry != nil {
+		settings.EnableTelemetry = *payload.EnableTelemetry
+	}
+
 	tlsError := handler.updateTLS(settings)
 	if tlsError != nil {
 		return tlsError
@@ -152,58 +176,15 @@ func (handler *Handler) settingsUpdate(w http.ResponseWriter, r *http.Request) *
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to persist settings changes inside the database", err}
 	}
 
-	if updateAuthorizations {
-		err := handler.updateVolumeBrowserSetting(settings)
-		if err != nil {
-			return &httperror.HandlerError{http.StatusInternalServerError, "Unable to update RBAC authorizations", err}
-		}
-	}
-
 	return response.JSON(w, settings)
-}
-
-func (handler *Handler) updateVolumeBrowserSetting(settings *portainer.Settings) error {
-	err := handler.AuthorizationService.UpdateVolumeBrowsingAuthorizations(settings.AllowVolumeBrowserForRegularUsers)
-	if err != nil {
-		return err
-	}
-
-	extension, err := handler.DataStore.Extension().Extension(portainer.RBACExtension)
-	if err != nil && err != portainer.ErrObjectNotFound {
-		return err
-	}
-
-	if extension != nil {
-		err = handler.AuthorizationService.UpdateUsersAuthorizations()
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func (handler *Handler) updateSnapshotInterval(settings *portainer.Settings, snapshotInterval string) error {
 	settings.SnapshotInterval = snapshotInterval
 
-	schedules, err := handler.DataStore.Schedule().SchedulesByJobType(portainer.SnapshotJobType)
+	err := handler.SnapshotService.SetSnapshotInterval(snapshotInterval)
 	if err != nil {
 		return err
-	}
-
-	if len(schedules) != 0 {
-		snapshotSchedule := schedules[0]
-		snapshotSchedule.CronExpression = "@every " + snapshotInterval
-
-		err := handler.JobScheduler.UpdateSystemJobSchedule(portainer.SnapshotJobType, snapshotSchedule.CronExpression)
-		if err != nil {
-			return err
-		}
-
-		err = handler.DataStore.Schedule().UpdateSchedule(snapshotSchedule.ID, &snapshotSchedule)
-		if err != nil {
-			return err
-		}
 	}
 
 	return nil

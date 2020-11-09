@@ -2,7 +2,7 @@ package endpoints
 
 import (
 	httperror "github.com/portainer/libhttp/error"
-	"github.com/portainer/portainer/api"
+	portainer "github.com/portainer/portainer/api"
 	"github.com/portainer/portainer/api/http/proxy"
 	"github.com/portainer/portainer/api/http/security"
 
@@ -14,7 +14,7 @@ import (
 func hideFields(endpoint *portainer.Endpoint) {
 	endpoint.AzureCredentials = portainer.AzureCredentials{}
 	if len(endpoint.Snapshots) > 0 {
-		endpoint.Snapshots[0].SnapshotRaw = portainer.SnapshotRaw{}
+		endpoint.Snapshots[0].SnapshotRaw = portainer.DockerSnapshotRaw{}
 	}
 }
 
@@ -23,12 +23,10 @@ type Handler struct {
 	*mux.Router
 	requestBouncer       *security.RequestBouncer
 	DataStore            portainer.DataStore
-	AuthorizationService *portainer.AuthorizationService
 	FileService          portainer.FileService
-	JobService           portainer.JobService
 	ProxyManager         *proxy.Manager
 	ReverseTunnelService portainer.ReverseTunnelService
-	Snapshotter          portainer.Snapshotter
+	SnapshotService      portainer.SnapshotService
 }
 
 // NewHandler creates a handler to manage endpoint operations.
@@ -54,8 +52,6 @@ func NewHandler(bouncer *security.RequestBouncer) *Handler {
 		bouncer.RestrictedAccess(httperror.LoggerHandler(h.endpointExtensionAdd))).Methods(http.MethodPost)
 	h.Handle("/endpoints/{id}/extensions/{extensionType}",
 		bouncer.RestrictedAccess(httperror.LoggerHandler(h.endpointExtensionRemove))).Methods(http.MethodDelete)
-	h.Handle("/endpoints/{id}/job",
-		bouncer.AdminAccess(httperror.LoggerHandler(h.endpointJob))).Methods(http.MethodPost)
 	h.Handle("/endpoints/{id}/snapshot",
 		bouncer.AdminAccess(httperror.LoggerHandler(h.endpointSnapshot))).Methods(http.MethodPost)
 	h.Handle("/endpoints/{id}/status",

@@ -7,12 +7,15 @@ import (
 
 	"github.com/boltdb/bolt"
 	"github.com/portainer/portainer/api"
+	"github.com/portainer/portainer/api/bolt/customtemplate"
 	"github.com/portainer/portainer/api/bolt/dockerhub"
 	"github.com/portainer/portainer/api/bolt/edgegroup"
+	"github.com/portainer/portainer/api/bolt/edgejob"
 	"github.com/portainer/portainer/api/bolt/edgestack"
 	"github.com/portainer/portainer/api/bolt/endpoint"
 	"github.com/portainer/portainer/api/bolt/endpointgroup"
 	"github.com/portainer/portainer/api/bolt/endpointrelation"
+	"github.com/portainer/portainer/api/bolt/errors"
 	"github.com/portainer/portainer/api/bolt/extension"
 	"github.com/portainer/portainer/api/bolt/migrator"
 	"github.com/portainer/portainer/api/bolt/registry"
@@ -28,6 +31,7 @@ import (
 	"github.com/portainer/portainer/api/bolt/user"
 	"github.com/portainer/portainer/api/bolt/version"
 	"github.com/portainer/portainer/api/bolt/webhook"
+	"github.com/portainer/portainer/api/internal/authorization"
 )
 
 const (
@@ -41,8 +45,10 @@ type Store struct {
 	db                      *bolt.DB
 	isNew                   bool
 	fileService             portainer.FileService
+	CustomTemplateService   *customtemplate.Service
 	DockerHubService        *dockerhub.Service
 	EdgeGroupService        *edgegroup.Service
+	EdgeJobService          *edgejob.Service
 	EdgeStackService        *edgestack.Service
 	EndpointGroupService    *endpointgroup.Service
 	EndpointService         *endpoint.Service
@@ -118,7 +124,7 @@ func (store *Store) MigrateData() error {
 	}
 
 	version, err := store.VersionService.DBVersion()
-	if err == portainer.ErrObjectNotFound {
+	if err == errors.ErrObjectNotFound {
 		version = 0
 	} else if err != nil {
 		return err
@@ -143,7 +149,7 @@ func (store *Store) MigrateData() error {
 			UserService:             store.UserService,
 			VersionService:          store.VersionService,
 			FileService:             store.fileService,
-			AuthorizationService:    portainer.NewAuthorizationService(store),
+			AuthorizationService:    authorization.NewService(store),
 		}
 		migrator := migrator.NewMigrator(migratorParams)
 
@@ -165,6 +171,12 @@ func (store *Store) initServices() error {
 	}
 	store.RoleService = authorizationsetService
 
+	customTemplateService, err := customtemplate.NewService(store.db)
+	if err != nil {
+		return err
+	}
+	store.CustomTemplateService = customTemplateService
+
 	dockerhubService, err := dockerhub.NewService(store.db)
 	if err != nil {
 		return err
@@ -182,6 +194,12 @@ func (store *Store) initServices() error {
 		return err
 	}
 	store.EdgeGroupService = edgeGroupService
+
+	edgeJobService, err := edgejob.NewService(store.db)
+	if err != nil {
+		return err
+	}
+	store.EdgeJobService = edgeJobService
 
 	endpointgroupService, err := endpointgroup.NewService(store.db)
 	if err != nil {
@@ -282,6 +300,11 @@ func (store *Store) initServices() error {
 	return nil
 }
 
+// CustomTemplate gives access to the CustomTemplate data management layer
+func (store *Store) CustomTemplate() portainer.CustomTemplateService {
+	return store.CustomTemplateService
+}
+
 // DockerHub gives access to the DockerHub data management layer
 func (store *Store) DockerHub() portainer.DockerHubService {
 	return store.DockerHubService
@@ -290,6 +313,11 @@ func (store *Store) DockerHub() portainer.DockerHubService {
 // EdgeGroup gives access to the EdgeGroup data management layer
 func (store *Store) EdgeGroup() portainer.EdgeGroupService {
 	return store.EdgeGroupService
+}
+
+// EdgeJob gives access to the EdgeJob data management layer
+func (store *Store) EdgeJob() portainer.EdgeJobService {
+	return store.EdgeJobService
 }
 
 // EdgeStack gives access to the EdgeStack data management layer
@@ -312,11 +340,6 @@ func (store *Store) EndpointRelation() portainer.EndpointRelationService {
 	return store.EndpointRelationService
 }
 
-// Extension gives access to the Extension data management layer
-func (store *Store) Extension() portainer.ExtensionService {
-	return store.ExtensionService
-}
-
 // Registry gives access to the Registry data management layer
 func (store *Store) Registry() portainer.RegistryService {
 	return store.RegistryService
@@ -330,11 +353,6 @@ func (store *Store) ResourceControl() portainer.ResourceControlService {
 // Role gives access to the Role data management layer
 func (store *Store) Role() portainer.RoleService {
 	return store.RoleService
-}
-
-// Schedule gives access to the Schedule data management layer
-func (store *Store) Schedule() portainer.ScheduleService {
-	return store.ScheduleService
 }
 
 // Settings gives access to the Settings data management layer

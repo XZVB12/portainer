@@ -9,7 +9,10 @@ import (
 	"github.com/portainer/libhttp/request"
 	"github.com/portainer/libhttp/response"
 	"github.com/portainer/portainer/api"
+	"github.com/portainer/portainer/api/bolt/errors"
 	"github.com/portainer/portainer/api/http/client"
+	"github.com/portainer/portainer/api/internal/edge"
+	"github.com/portainer/portainer/api/internal/tag"
 )
 
 type endpointUpdatePayload struct {
@@ -28,6 +31,7 @@ type endpointUpdatePayload struct {
 	UserAccessPolicies     portainer.UserAccessPolicies
 	TeamAccessPolicies     portainer.TeamAccessPolicies
 	EdgeCheckinInterval    *int
+	Kubernetes             *portainer.KubernetesData
 }
 
 func (payload *endpointUpdatePayload) Validate(r *http.Request) error {
@@ -48,7 +52,7 @@ func (handler *Handler) endpointUpdate(w http.ResponseWriter, r *http.Request) *
 	}
 
 	endpoint, err := handler.DataStore.Endpoint().Endpoint(portainer.EndpointID(endpointID))
-	if err == portainer.ErrObjectNotFound {
+	if err == errors.ErrObjectNotFound {
 		return &httperror.HandlerError{http.StatusNotFound, "Unable to find an endpoint with the specified identifier inside the database", err}
 	} else if err != nil {
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to find an endpoint with the specified identifier inside the database", err}
@@ -79,14 +83,14 @@ func (handler *Handler) endpointUpdate(w http.ResponseWriter, r *http.Request) *
 
 	tagsChanged := false
 	if payload.TagIDs != nil {
-		payloadTagSet := portainer.TagSet(payload.TagIDs)
-		endpointTagSet := portainer.TagSet((endpoint.TagIDs))
-		union := portainer.TagUnion(payloadTagSet, endpointTagSet)
-		intersection := portainer.TagIntersection(payloadTagSet, endpointTagSet)
+		payloadTagSet := tag.Set(payload.TagIDs)
+		endpointTagSet := tag.Set((endpoint.TagIDs))
+		union := tag.Union(payloadTagSet, endpointTagSet)
+		intersection := tag.Intersection(payloadTagSet, endpointTagSet)
 		tagsChanged = len(union) > len(intersection)
 
 		if tagsChanged {
-			removeTags := portainer.TagDifference(endpointTagSet, payloadTagSet)
+			removeTags := tag.Difference(endpointTagSet, payloadTagSet)
 
 			for tagID := range removeTags {
 				tag, err := handler.DataStore.Tag().Tag(tagID)
@@ -118,15 +122,16 @@ func (handler *Handler) endpointUpdate(w http.ResponseWriter, r *http.Request) *
 		}
 	}
 
-	updateAuthorizations := false
+	if payload.Kubernetes != nil {
+		endpoint.Kubernetes = *payload.Kubernetes
+	}
+
 	if payload.UserAccessPolicies != nil && !reflect.DeepEqual(payload.UserAccessPolicies, endpoint.UserAccessPolicies) {
 		endpoint.UserAccessPolicies = payload.UserAccessPolicies
-		updateAuthorizations = true
 	}
 
 	if payload.TeamAccessPolicies != nil && !reflect.DeepEqual(payload.TeamAccessPolicies, endpoint.TeamAccessPolicies) {
 		endpoint.TeamAccessPolicies = payload.TeamAccessPolicies
-		updateAuthorizations = true
 	}
 
 	if payload.Status != nil {
@@ -218,14 +223,7 @@ func (handler *Handler) endpointUpdate(w http.ResponseWriter, r *http.Request) *
 		return &httperror.HandlerError{http.StatusInternalServerError, "Unable to persist endpoint changes inside the database", err}
 	}
 
-	if updateAuthorizations {
-		err = handler.AuthorizationService.UpdateUsersAuthorizations()
-		if err != nil {
-			return &httperror.HandlerError{http.StatusInternalServerError, "Unable to update user authorizations", err}
-		}
-	}
-
-	if endpoint.Type == portainer.EdgeAgentEnvironment && (groupIDChanged || tagsChanged) {
+	if (endpoint.Type == portainer.EdgeAgentOnDockerEnvironment || endpoint.Type == portainer.EdgeAgentOnKubernetesEnvironment) && (groupIDChanged || tagsChanged) {
 		relation, err := handler.DataStore.EndpointRelation().EndpointRelation(endpoint.ID)
 		if err != nil {
 			return &httperror.HandlerError{http.StatusInternalServerError, "Unable to find endpoint relation inside the database", err}
@@ -248,7 +246,7 @@ func (handler *Handler) endpointUpdate(w http.ResponseWriter, r *http.Request) *
 
 		edgeStackSet := map[portainer.EdgeStackID]bool{}
 
-		endpointEdgeStacks := portainer.EndpointRelatedEdgeStacks(endpoint, endpointGroup, edgeGroups, edgeStacks)
+		endpointEdgeStacks := edge.EndpointRelatedEdgeStacks(endpoint, endpointGroup, edgeGroups, edgeStacks)
 		for _, edgeStackID := range endpointEdgeStacks {
 			edgeStackSet[edgeStackID] = true
 		}

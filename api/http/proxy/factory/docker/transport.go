@@ -10,12 +10,12 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/portainer/portainer/api/docker"
-
 	"github.com/docker/docker/client"
-	portainer "github.com/portainer/portainer/api"
+	"github.com/portainer/portainer/api"
+	"github.com/portainer/portainer/api/docker"
 	"github.com/portainer/portainer/api/http/proxy/factory/responseutils"
 	"github.com/portainer/portainer/api/http/security"
+	"github.com/portainer/portainer/api/internal/authorization"
 )
 
 var apiVersionRe = regexp.MustCompile(`(/v[0-9]\.[0-9]*)?`)
@@ -43,11 +43,10 @@ type (
 	}
 
 	restrictedDockerOperationContext struct {
-		isAdmin                bool
-		endpointResourceAccess bool
-		userID                 portainer.UserID
-		userTeamIDs            []portainer.TeamID
-		resourceControls       []portainer.ResourceControl
+		isAdmin          bool
+		userID           portainer.UserID
+		userTeamIDs      []portainer.TeamID
+		resourceControls []portainer.ResourceControl
 	}
 
 	operationExecutor struct {
@@ -132,7 +131,7 @@ func (transport *Transport) ProxyDockerRequest(request *http.Request) (*http.Res
 func (transport *Transport) executeDockerRequest(request *http.Request) (*http.Response, error) {
 	response, err := transport.HTTPTransport.RoundTrip(request)
 
-	if transport.endpoint.Type != portainer.EdgeAgentEnvironment {
+	if transport.endpoint.Type != portainer.EdgeAgentOnDockerEnvironment {
 		return response, err
 	}
 
@@ -156,8 +155,14 @@ func (transport *Transport) proxyAgentRequest(r *http.Request) (*http.Response, 
 			return transport.administratorOperation(r)
 		}
 
+		agentTargetHeader := r.Header.Get(portainer.PortainerAgentTargetHeader)
+		resourceID, err := transport.getVolumeResourceID(agentTargetHeader, volumeIDParameter[0])
+		if err != nil {
+			return nil, err
+		}
+
 		// volume browser request
-		return transport.restrictedResourceOperation(r, volumeIDParameter[0], portainer.VolumeResourceControl, true)
+		return transport.restrictedResourceOperation(r, resourceID, portainer.VolumeResourceControl, true)
 	}
 
 	return transport.executeDockerRequest(r)
@@ -188,7 +193,7 @@ func (transport *Transport) proxyConfigRequest(request *http.Request) (*http.Res
 func (transport *Transport) proxyContainerRequest(request *http.Request) (*http.Response, error) {
 	switch requestPath := request.URL.Path; requestPath {
 	case "/containers/create":
-		return transport.decorateGenericResourceCreationOperation(request, containerObjectIdentifier, portainer.ContainerResourceControl)
+		return transport.decorateContainerCreationOperation(request, containerObjectIdentifier, portainer.ContainerResourceControl)
 
 	case "/containers/prune":
 		return transport.administratorOperation(request)
@@ -224,7 +229,7 @@ func (transport *Transport) proxyContainerRequest(request *http.Request) (*http.
 func (transport *Transport) proxyServiceRequest(request *http.Request) (*http.Response, error) {
 	switch requestPath := request.URL.Path; requestPath {
 	case "/services/create":
-		return transport.replaceRegistryAuthenticationHeader(request)
+		return transport.decorateServiceCreationOperation(request)
 
 	case "/services":
 		return transport.rewriteOperation(request, transport.serviceListOperation)
@@ -264,14 +269,7 @@ func (transport *Transport) proxyVolumeRequest(request *http.Request) (*http.Res
 
 	default:
 		// assume /volumes/{name}
-		volumeID := path.Base(requestPath)
-
-		if request.Method == http.MethodGet {
-			return transport.rewriteOperation(request, transport.volumeInspectOperation)
-		} else if request.Method == http.MethodDelete {
-			return transport.executeGenericResourceDeletionOperation(request, volumeID, portainer.VolumeResourceControl)
-		}
-		return transport.restrictedResourceOperation(request, volumeID, portainer.VolumeResourceControl, false)
+		return transport.restrictedVolumeOperation(requestPath, request)
 	}
 }
 
@@ -408,16 +406,6 @@ func (transport *Transport) restrictedResourceOperation(request *http.Request, r
 	}
 
 	if tokenData.Role != portainer.AdministratorRole {
-		rbacExtension, err := transport.dataStore.Extension().Extension(portainer.RBACExtension)
-		if err != nil && err != portainer.ErrObjectNotFound {
-			return nil, err
-		}
-
-		user, err := transport.dataStore.User().User(tokenData.ID)
-		if err != nil {
-			return nil, err
-		}
-
 		if volumeBrowseRestrictionCheck {
 			settings, err := transport.dataStore.Settings().Settings()
 			if err != nil {
@@ -425,26 +413,8 @@ func (transport *Transport) restrictedResourceOperation(request *http.Request, r
 			}
 
 			if !settings.AllowVolumeBrowserForRegularUsers {
-				if rbacExtension == nil {
-					return responseutils.WriteAccessDeniedResponse()
-				}
-
-				// Return access denied for all roles except endpoint-administrator
-				_, userCanBrowse := user.EndpointAuthorizations[transport.endpoint.ID][portainer.OperationDockerAgentBrowseList]
-				if !userCanBrowse {
-					return responseutils.WriteAccessDeniedResponse()
-				}
+				return responseutils.WriteAccessDeniedResponse()
 			}
-		}
-
-		endpointResourceAccess := false
-		_, ok := user.EndpointAuthorizations[transport.endpoint.ID][portainer.EndpointResourcesAccess]
-		if ok {
-			endpointResourceAccess = true
-		}
-
-		if rbacExtension != nil && endpointResourceAccess {
-			return transport.executeDockerRequest(request)
 		}
 
 		teamMemberships, err := transport.dataStore.TeamMembership().TeamMembershipsByUserID(tokenData.ID)
@@ -462,7 +432,7 @@ func (transport *Transport) restrictedResourceOperation(request *http.Request, r
 			return nil, err
 		}
 
-		resourceControl := portainer.GetResourceControlByResourceIDAndType(resourceID, resourceType, resourceControls)
+		resourceControl := authorization.GetResourceControlByResourceIDAndType(resourceID, resourceType, resourceControls)
 		if resourceControl == nil {
 			agentTargetHeader := request.Header.Get(portainer.PortainerAgentTargetHeader)
 
@@ -473,12 +443,12 @@ func (transport *Transport) restrictedResourceOperation(request *http.Request, r
 				return nil, err
 			}
 
-			if inheritedResourceControl == nil || !portainer.UserCanAccessResource(tokenData.ID, userTeamIDs, inheritedResourceControl) {
+			if inheritedResourceControl == nil || !authorization.UserCanAccessResource(tokenData.ID, userTeamIDs, inheritedResourceControl) {
 				return responseutils.WriteAccessDeniedResponse()
 			}
 		}
 
-		if resourceControl != nil && !portainer.UserCanAccessResource(tokenData.ID, userTeamIDs, resourceControl) {
+		if resourceControl != nil && !authorization.UserCanAccessResource(tokenData.ID, userTeamIDs, resourceControl) {
 			return responseutils.WriteAccessDeniedResponse()
 		}
 	}
@@ -679,24 +649,13 @@ func (transport *Transport) createOperationContext(request *http.Request) (*rest
 	}
 
 	operationContext := &restrictedDockerOperationContext{
-		isAdmin:                true,
-		userID:                 tokenData.ID,
-		resourceControls:       resourceControls,
-		endpointResourceAccess: false,
+		isAdmin:          true,
+		userID:           tokenData.ID,
+		resourceControls: resourceControls,
 	}
 
 	if tokenData.Role != portainer.AdministratorRole {
 		operationContext.isAdmin = false
-
-		user, err := transport.dataStore.User().User(operationContext.userID)
-		if err != nil {
-			return nil, err
-		}
-
-		_, ok := user.EndpointAuthorizations[transport.endpoint.ID][portainer.EndpointResourcesAccess]
-		if ok {
-			operationContext.endpointResourceAccess = true
-		}
 
 		teamMemberships, err := transport.dataStore.TeamMembership().TeamMembershipsByUserID(tokenData.ID)
 		if err != nil {
@@ -711,4 +670,13 @@ func (transport *Transport) createOperationContext(request *http.Request) (*rest
 	}
 
 	return operationContext, nil
+}
+
+func (transport *Transport) isAdminOrEndpointAdmin(request *http.Request) (bool, error) {
+	tokenData, err := security.RetrieveTokenData(request)
+	if err != nil {
+		return false, err
+	}
+
+	return tokenData.Role == portainer.AdministratorRole, nil
 }
