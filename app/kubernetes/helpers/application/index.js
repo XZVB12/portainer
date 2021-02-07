@@ -38,8 +38,8 @@ class KubernetesApplicationHelper {
     return !application.ApplicationOwner;
   }
 
-  static associatePodsAndApplication(pods, app) {
-    return _.filter(pods, { Labels: app.spec.selector.matchLabels });
+  static associatePodsAndApplication(pods, selector) {
+    return _.filter(pods, ['metadata.labels', selector.matchLabels]);
   }
 
   static associateContainerPersistedFoldersAndConfigurations(app, containers) {
@@ -175,7 +175,10 @@ class KubernetesApplicationHelper {
           item.OverridenKeys = _.map(keys, (k) => {
             const fvKey = new KubernetesApplicationConfigurationFormValueOverridenKey();
             fvKey.Key = k.Key;
-            if (index < k.EnvCount) {
+            if (!k.Count) {
+              // !k.Count indicates k.Key is new added to the configuration and has not been loaded to the application yet
+              fvKey.Type = KubernetesApplicationConfigurationFormValueOverridenKeyTypes.NONE;
+            } else if (index < k.EnvCount) {
               fvKey.Type = KubernetesApplicationConfigurationFormValueOverridenKeyTypes.ENVIRONMENT;
             } else {
               fvKey.Type = KubernetesApplicationConfigurationFormValueOverridenKeyTypes.FILESYSTEM;

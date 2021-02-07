@@ -33,6 +33,7 @@ angular.module('portainer.app').controller('GenericDatatableController', [
         refreshRate: '30',
       },
     };
+
     this.resetSelectionState = function () {
       this.state.selectAll = false;
       this.state.selectedItems = [];
@@ -70,7 +71,7 @@ angular.module('portainer.app').controller('GenericDatatableController', [
         item.Checked = !item.Checked;
         this.state.firstClickedItem = item;
       }
-      this.state.selectedItems = this.dataset.filter((i) => i.Checked);
+      this.state.selectedItems = _.uniq(_.concat(this.state.selectedItems, this.state.filteredDataSet)).filter((i) => i.Checked);
       if (event && this.state.selectAll && this.state.selectedItems.length !== this.state.filteredDataSet.length) {
         this.state.selectAll = false;
       }
@@ -158,6 +159,11 @@ angular.module('portainer.app').controller('GenericDatatableController', [
         this.settings.open = false;
       }
       this.onSettingsRepeaterChange();
+
+      var storedColumnVisibility = DatatableService.getColumnVisibilitySettings(this.tableKey);
+      if (storedColumnVisibility !== null) {
+        this.columnVisibility = storedColumnVisibility;
+      }
     };
 
     /**
